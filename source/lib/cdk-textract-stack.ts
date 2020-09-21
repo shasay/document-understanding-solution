@@ -40,6 +40,7 @@ import {
   PriceClass,
   HttpVersion,
   OriginAccessIdentity,
+  LambdaEdgeEventType
 } from "@aws-cdk/aws-cloudfront";
 import { CanonicalUserPrincipal } from "@aws-cdk/aws-iam";
 import uuid = require("short-uuid");
@@ -174,6 +175,22 @@ export class CdkTextractStack extends cdk.Stack {
       }
     );
 
+    const originResponseEdgeLambda = new lambda.Function(
+      this,
+      this.resourceName("originResponseEdgeLambda"),
+      {
+        code: lambda.Code.fromAsset("lambda/edge/"),
+        description: "onEvent handler for creating Kendra index",
+        runtime: lambda.Runtime.PYTHON_3_8,
+        handler: "lambdaFunction.handler",
+        timeout: Duration.minutes(15),
+      }
+    );
+
+    const originResponseEdgeLambdaVersion = new lambda.Version(this, this.resourceName("originResponseEdgeLambdaVersion"), {
+      lambda: originResponseEdgeLambda,
+    });
+
     // eslint-disable-next-line no-unused-vars
     const oai = new OriginAccessIdentity(this, "cdk-textract-oai", {
       comment:
@@ -190,7 +207,10 @@ export class CdkTextractStack extends cdk.Stack {
               s3BucketSource: clientAppS3Bucket,
               originAccessIdentity: oai,
             },
-            behaviors: [{ isDefaultBehavior: true }],
+            behaviors: [{ isDefaultBehavior: true, lambdaFunctionAssociations: [{
+              eventType: LambdaEdgeEventType.ORIGIN_RESPONSE,
+              lambdaFunction: originResponseEdgeLambdaVersion,
+            }]}],
           },
         ],
         errorConfigurations: [
@@ -225,6 +245,8 @@ export class CdkTextractStack extends cdk.Stack {
         ),
       ],
     });
+
+    originResponseEdgeLambdaVersion.grantInvoke(new iam.ServicePrincipal("cloudfront.amazonaws.com"))
 
     const cloudfrontSamplesBucketPolicyStatement = new iam.PolicyStatement({
       actions: ["s3:GetObject*", "s3:List*"],
